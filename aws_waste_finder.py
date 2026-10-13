@@ -155,7 +155,26 @@ def main():
     p.add_argument("--json", action="store_true", help="Output JSON instead of a human report")
     args = p.parse_args()
 
-    findings = find_waste(args.profile, args.region, args.days)
+    try:
+        findings = find_waste(args.profile, args.region, args.days)
+    except boto3.exceptions.Boto3Error as e:
+        print(f"AWS SDK error: {e}", file=sys.stderr)
+        sys.exit(2)
+    except Exception as e:
+        # botocore raises its own exception hierarchy (NoRegionError,
+        # NoCredentialsError, ClientError for bad/expired creds, etc.) that
+        # doesn't all inherit from boto3.exceptions.Boto3Error -- catch the
+        # common "nothing configured yet" cases with a friendly message
+        # instead of a raw traceback, since this tool is meant to be a quick
+        # zero-setup CLI check, not something users should have to debug.
+        name = type(e).__name__
+        if name in ("NoRegionError", "NoCredentialsError", "PartialCredentialsError",
+                     "ProfileNotFound", "ClientError", "EndpointConnectionError"):
+            print(f"AWS error ({name}): {e}", file=sys.stderr)
+            print("Check --region/--profile and that AWS credentials are configured "
+                  "(aws configure, env vars, or instance role).", file=sys.stderr)
+            sys.exit(2)
+        raise
 
     if args.json:
         print(json.dumps(findings, indent=2, default=str))
