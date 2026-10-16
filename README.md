@@ -8,8 +8,8 @@ review only — never auto-flagged, since deciding whether an RDS instance
 is "wasted" needs human judgment.
 
 By **Errant Solutions** (errant.solutions), makers of [Rustinion](https://rustinion.com)
-(device provisioning & monitoring), [Big Double D](https://oops.codes) (security
-awareness training), and [SSHerpa](https://ssherpa.app) (Android SSH client).
+(device provisioning & monitoring), [/Dev/Out Digital](https://devout.digital) (security
+awareness training), [OOPS!](https://oops.codes) (hands-on security labs), and [SSHerpa](https://ssherpa.app) (Android SSH client).
 
 ## Why
 
@@ -21,9 +21,7 @@ already high. This tool is **read-only** — it never deletes or modifies
 anything, it just tells you what to go look at.
 
 We built this after running it against our own AWS account and finding
-real waste (see below) — including a past-due AWS bill we're still
-carrying, which this tool would have flagged earlier if we'd had it
-sooner.
+real waste (see below).
 
 ## Usage
 
