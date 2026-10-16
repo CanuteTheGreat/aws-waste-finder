@@ -57,8 +57,15 @@ def find_waste(profile, region, snapshot_days):
         "rds_instances_for_review": [],
     }
 
+    def pages(client, op, key, **kw):
+        """Every item across all result pages (a single Describe call stops at
+        the first page -- e.g. 1000 snapshots -- and silently misses the rest)."""
+        for page in client.get_paginator(op).paginate(**kw):
+            for item in page.get(key, []):
+                yield item
+
     # Unattached EBS volumes
-    for v in ec2.describe_volumes(Filters=[{"Name": "status", "Values": ["available"]}])["Volumes"]:
+    for v in pages(ec2, "describe_volumes", "Volumes", Filters=[{"Name": "status", "Values": ["available"]}]):
         findings["unattached_volumes"].append({
             "id": v["VolumeId"], "size_gb": v["Size"], "type": v["VolumeType"],
             "created": v["CreateTime"].isoformat(),
@@ -72,7 +79,8 @@ def find_waste(profile, region, snapshot_days):
             })
 
     # Stopped instances (still billed for EBS)
-    for r in ec2.describe_instances(Filters=[{"Name": "instance-state-name", "Values": ["stopped"]}])["Reservations"]:
+    for r in pages(ec2, "describe_instances", "Reservations",
+                   Filters=[{"Name": "instance-state-name", "Values": ["stopped"]}]):
         for i in r["Instances"]:
             name = next((t["Value"] for t in i.get("Tags", []) if t["Key"] == "Name"), None)
             findings["stopped_instances"].append({
@@ -81,7 +89,7 @@ def find_waste(profile, region, snapshot_days):
 
     # Old snapshots
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=snapshot_days)
-    for s in ec2.describe_snapshots(OwnerIds=["self"])["Snapshots"]:
+    for s in pages(ec2, "describe_snapshots", "Snapshots", OwnerIds=["self"]):
         if s["StartTime"] <= cutoff:
             findings["old_snapshots"].append({
                 "id": s["SnapshotId"], "size_gb": s["VolumeSize"],
@@ -89,13 +97,13 @@ def find_waste(profile, region, snapshot_days):
             })
 
     # NAT Gateways
-    for n in ec2.describe_nat_gateways(Filters=[{"Name": "state", "Values": ["available"]}])["NatGateways"]:
+    for n in pages(ec2, "describe_nat_gateways", "NatGateways", Filter=[{"Name": "state", "Values": ["available"]}]):
         findings["nat_gateways"].append({"id": n["NatGatewayId"], "vpc_id": n["VpcId"]})
 
     # Idle Load Balancers (no healthy targets in any target group)
     try:
-        for lb in elbv2.describe_load_balancers()["LoadBalancers"]:
-            tgs = elbv2.describe_target_groups(LoadBalancerArn=lb["LoadBalancerArn"])["TargetGroups"]
+        for lb in pages(elbv2, "describe_load_balancers", "LoadBalancers"):
+            tgs = list(pages(elbv2, "describe_target_groups", "TargetGroups", LoadBalancerArn=lb["LoadBalancerArn"]))
             has_healthy = False
             for tg in tgs:
                 health = elbv2.describe_target_health(TargetGroupArn=tg["TargetGroupArn"])["TargetHealthDescriptions"]
@@ -111,7 +119,7 @@ def find_waste(profile, region, snapshot_days):
 
     # RDS — just list for manual review, never auto-flag as waste (too risky to guess)
     try:
-        for db in rds.describe_db_instances()["DBInstances"]:
+        for db in pages(rds, "describe_db_instances", "DBInstances"):
             findings["rds_instances_for_review"].append({
                 "id": db["DBInstanceIdentifier"], "class": db["DBInstanceClass"],
                 "storage_gb": db.get("AllocatedStorage"), "multi_az": db.get("MultiAZ"),
@@ -156,25 +164,30 @@ def main():
     args = p.parse_args()
 
     try:
+        import botocore.exceptions
         findings = find_waste(args.profile, args.region, args.days)
-    except boto3.exceptions.Boto3Error as e:
-        print(f"AWS SDK error: {e}", file=sys.stderr)
+    except botocore.exceptions.NoRegionError:
+        print(
+            "ERROR: no AWS region configured. Pass --region us-east-1 (or whichever "
+            "region you use), or set one in your AWS profile/config/env (AWS_DEFAULT_REGION).",
+            file=sys.stderr,
+        )
         sys.exit(2)
-    except Exception as e:
-        # botocore raises its own exception hierarchy (NoRegionError,
-        # NoCredentialsError, ClientError for bad/expired creds, etc.) that
-        # doesn't all inherit from boto3.exceptions.Boto3Error -- catch the
-        # common "nothing configured yet" cases with a friendly message
-        # instead of a raw traceback, since this tool is meant to be a quick
-        # zero-setup CLI check, not something users should have to debug.
-        name = type(e).__name__
-        if name in ("NoRegionError", "NoCredentialsError", "PartialCredentialsError",
-                     "ProfileNotFound", "ClientError", "EndpointConnectionError"):
-            print(f"AWS error ({name}): {e}", file=sys.stderr)
-            print("Check --region/--profile and that AWS credentials are configured "
-                  "(aws configure, env vars, or instance role).", file=sys.stderr)
-            sys.exit(2)
-        raise
+    except botocore.exceptions.NoCredentialsError:
+        print(
+            "ERROR: no AWS credentials found. Configure them first, e.g. "
+            "`aws configure` (or --profile NAME / env vars / an instance role).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    except botocore.exceptions.ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "Unknown")
+        msg = e.response.get("Error", {}).get("Message", str(e))
+        print(f"ERROR: AWS API call failed ({code}): {msg}", file=sys.stderr)
+        sys.exit(2)
+    except botocore.exceptions.BotoCoreError as e:
+        print(f"ERROR: AWS SDK error: {e}", file=sys.stderr)
+        sys.exit(2)
 
     if args.json:
         print(json.dumps(findings, indent=2, default=str))

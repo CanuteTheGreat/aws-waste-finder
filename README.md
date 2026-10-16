@@ -36,8 +36,11 @@ Options:
 - `--days N` — flag snapshots older than N days (default: 90)
 - `--json` — output JSON instead of a human report (for scripting/CI)
 
-Exit code is non-zero if anything is flagged, so it's safe to drop into a
-weekly cron job or CI pipeline and alert on failure.
+Exit code is `1` if anything is flagged (RDS review entries don't count), so
+it's safe to drop into a weekly cron job or CI pipeline and alert on failure;
+`2` if AWS can't be reached or isn't configured (no region, no credentials,
+unknown profile, API error) -- with a one-line explanation, not a traceback.
+Every listing is fully paginated, so large accounts are scanned completely.
 
 ## Requires
 
@@ -60,3 +63,8 @@ This tool is free. If it saved you money and you want to say thanks:
 ## License
 
 MIT — see LICENSE.
+
+## Tests
+
+`tests/` exercises every option and check end-to-end (against moto's AWS API server) in Forgejo CI on
+Python 3.8 and current Python; `sh ci/run-tests.sh 3.13` reproduces it locally (needs docker).
