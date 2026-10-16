@@ -239,5 +239,31 @@ class TestOptionsAndErrors(Base):
             self.assertIn(opt, p.stdout)
 
 
+class TestFailedCheckIsVisible(unittest.TestCase):
+    """A check that errors (e.g. missing elasticloadbalancing:Describe* permission)
+    must say so in the human report, not print "(none found)" like a clean result."""
+
+    def test_text_report_shows_failed_check(self):
+        import contextlib
+        import importlib.util
+        import io
+        spec = importlib.util.spec_from_file_location("aws_waste_finder", TOOL)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        findings = {k: [] for k in ("unattached_volumes", "unassociated_eips", "stopped_instances",
+                                    "old_snapshots", "nat_gateways", "idle_load_balancers",
+                                    "rds_instances_for_review")}
+        findings["idle_load_balancers_error"] = "AccessDenied: not authorized"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            mod.print_report(findings)
+        out = buf.getvalue()
+        lb = out.split("=== Idle Load Balancers")[1].split("===")[1]
+        self.assertIn("check FAILED", lb)
+        self.assertIn("AccessDenied", lb)
+        self.assertNotIn("(none found)", lb)
+        self.assertIn("(none found)", out.split("=== Unattached EBS volumes")[1])
+
+
 if __name__ == "__main__":
     unittest.main()

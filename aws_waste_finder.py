@@ -103,7 +103,17 @@ def find_waste(profile, region, snapshot_days):
     # Idle Load Balancers (no healthy targets in any target group)
     try:
         for lb in pages(elbv2, "describe_load_balancers", "LoadBalancers"):
-            tgs = list(pages(elbv2, "describe_target_groups", "TargetGroups", LoadBalancerArn=lb["LoadBalancerArn"]))
+            try:
+                tgs = list(pages(elbv2, "describe_target_groups", "TargetGroups",
+                                 LoadBalancerArn=lb["LoadBalancerArn"]))
+            except Exception as e:
+                # A load balancer with no target groups attached at all is the most
+                # idle kind there is; some API implementations answer that with
+                # TargetGroupNotFound instead of an empty list. Treat it as "no
+                # target groups" for this LB rather than aborting the whole check.
+                if getattr(e, "response", {}).get("Error", {}).get("Code") != "TargetGroupNotFound":
+                    raise
+                tgs = []
             has_healthy = False
             for tg in tgs:
                 health = elbv2.describe_target_health(TargetGroupArn=tg["TargetGroupArn"])["TargetHealthDescriptions"]
@@ -131,28 +141,34 @@ def find_waste(profile, region, snapshot_days):
 
 
 def print_report(findings):
-    def section(title, items, fmt):
+    def section(title, items, fmt, key=None):
         print(f"\n=== {title} ({len(items)}) ===")
+        err = findings.get(f"{key}_error") if key else None
+        if err:
+            # The check itself failed (e.g. missing IAM permission): say so instead
+            # of printing "(none found)", which would read as a clean result.
+            print(f"  (check FAILED, results incomplete: {err})")
         if not items:
-            print("  (none found)")
+            if not err:
+                print("  (none found)")
             return
         for it in items:
             print("  " + fmt(it))
 
     section("Unattached EBS volumes", findings["unattached_volumes"],
-             lambda v: f"{v['id']}  {v['size_gb']}GB {v['type']}  created {v['created']}")
+             lambda v: f"{v['id']}  {v['size_gb']}GB {v['type']}  created {v['created']}", key="unattached_volumes")
     section("Unassociated Elastic IPs", findings["unassociated_eips"],
-             lambda a: f"{a['ip']}  ({a['allocation_id']})")
+             lambda a: f"{a['ip']}  ({a['allocation_id']})", key="unassociated_eips")
     section("Stopped EC2 instances (still billed for EBS)", findings["stopped_instances"],
-             lambda i: f"{i['id']}  {i['type']}  name={i['name']}")
+             lambda i: f"{i['id']}  {i['type']}  name={i['name']}", key="stopped_instances")
     section("Old EBS snapshots", findings["old_snapshots"],
-             lambda s: f"{s['id']}  {s['size_gb']}GB  started {s['started']}  {s['description']}")
+             lambda s: f"{s['id']}  {s['size_gb']}GB  started {s['started']}  {s['description']}", key="old_snapshots")
     section("NAT Gateways (~$32/mo each + data)", findings["nat_gateways"],
-             lambda n: f"{n['id']}  vpc={n['vpc_id']}")
+             lambda n: f"{n['id']}  vpc={n['vpc_id']}", key="nat_gateways")
     section("Idle Load Balancers (no healthy targets)", findings["idle_load_balancers"],
-             lambda l: f"{l['name']}  ({l['type']})")
+             lambda l: f"{l['name']}  ({l['type']})", key="idle_load_balancers")
     section("RDS instances (review manually — never auto-flagged)", findings["rds_instances_for_review"],
-             lambda d: f"{d['id']}  {d['class']}  {d['storage_gb']}GB  multi_az={d['multi_az']}")
+             lambda d: f"{d['id']}  {d['class']}  {d['storage_gb']}GB  multi_az={d['multi_az']}", key="rds_instances_for_review")
 
 
 def main():
