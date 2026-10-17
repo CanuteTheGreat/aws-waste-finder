@@ -76,7 +76,8 @@ class TestClaims(unittest.TestCase):
 
     def test_stdlib_only(self):
         optional = set(LEDGER.get("optional_imports", []))
-        third_party = sorted(m for m in imported_modules() - optional if m != "__future__" and not is_stdlib(m))
+        # (mutation testing runs a mutmut-instrumented copy of the tool, which imports mutmut)
+        third_party = sorted(m for m in imported_modules() - optional - {"__future__", "mutmut"} if not is_stdlib(m))
         self.assertEqual(third_party, [], "the tool imports non-stdlib modules")
         self.assertTrue(re.search(r"stdlib|standard library|[Zz]ero dependencies", README))
 
