@@ -91,26 +91,30 @@ def test_exists(ref, cache):
     return None
 
 
-def readme_claims(readme):
-    """Things in the README that are claims and must be in the ledger."""
-    # every top-level bullet outside the install/license/tests/background sections is a claim;
-    # it is identified by its bold lead-in, else by its first line
-    skip = re.compile(r"(?i)^#+ *(install|license|licen[cs]e / pricing|tests|why|pricing|support)\b")
-    bullets, section_skipped = [], False
+SKIP_SECTIONS = re.compile(r"(?i)^#+ *(install|license|licen[cs]e / pricing|tests|why|pricing|support|roadmap)\b")
+
+
+def readme_claims(readme, foreign=()):
+    """Things in the README that are claims and must be in the ledger: every top-level bullet
+    outside the install/license/tests/background/roadmap sections and outside code blocks
+    (identified by its bold lead-in, else its first line), every --option outside those
+    sections (minus `foreign` ones that belong to other commands, e.g. pipx's --spec), and
+    the exit-code contract."""
+    bullets, kept, skipped, fenced = [], [], False, False
     for line in readme.splitlines():
-        if line.startswith("#"):
-            section_skipped = bool(skip.match(line))
+        if line.startswith("```"):
+            fenced = not fenced
+        elif line.startswith("#") and not fenced:
+            skipped = bool(SKIP_SECTIONS.match(line))
             continue
-        if section_skipped or not re.match(r"^[-*] ", line):
+        if skipped:
+            continue
+        kept.append(line)
+        if fenced or not re.match(r"^[-*] ", line):
             continue
         m = re.match(r"^[-*] \*\*(.+?)\*\*", line)
         bullets.append(m.group(1) if m else line[2:].strip())
-    flags = set(re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]*)", readme))
-    # install commands' own options are not claims about this tool
-    install = re.search(r"^## Install\b.*?(?=^## )", readme, re.M | re.S)
-    install_flags = set(re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]*)", install.group(0))) if install else set()
-    usage_flags = set(re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]*)", readme.replace(install.group(0), "") if install else readme))
-    flags = usage_flags | (flags - install_flags)
+    flags = set(re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]*)", "\n".join(kept))) - set(foreign)
     flags -= {"--", "--user", "--break-system-packages"}
     exit_codes = bool(re.search(r"exit code", readme, re.I))
     return bullets, flags, exit_codes
@@ -143,7 +147,7 @@ def main():
             err = test_exists(ref, cache)
             if err:
                 problems.append("claim %s: %s" % (cid, err))
-    bullets, flags, exit_codes = readme_claims(readme)
+    bullets, flags, exit_codes = readme_claims(readme, ledger.get("foreign_options", []))
     for b in bullets:
         if not any(norm(b) in t or t in norm(b) for t in covered_text if t):
             problems.append("README feature bullet has no ledger entry: %r" % b)

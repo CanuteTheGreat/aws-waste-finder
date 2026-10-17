@@ -67,9 +67,10 @@ def is_stdlib(name):
 
 class TestClaims(unittest.TestCase):
     def test_readme_options_exist(self):
-        install = re.search(r"^## Install\b.*?(?=^## )", README, re.M | re.S)
-        text = README.replace(install.group(0), "") if install else README
-        options = set(re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]*)", text)) - set(LEDGER.get("hidden_options", []))
+        sys.path.insert(0, os.path.join(ROOT, "ci"))
+        from check_claims import readme_claims
+        _, options, _ = readme_claims(README, LEDGER.get("foreign_options", []))
+        options -= set(LEDGER.get("hidden_options", []))
         help_text = run("--help").stdout
         missing = sorted(o for o in options if o not in help_text)
         self.assertEqual(missing, [], "README mentions options that --help doesn't have")

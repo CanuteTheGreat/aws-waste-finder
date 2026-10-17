@@ -46,5 +46,5 @@ only-include = ["aws_waste_finder.py", "README.md", "LICENSE", "CHANGELOG.md", "
 # ci/mutation.sh (nightly workflow)
 source_paths = ["aws_waste_finder.py"]
 pytest_add_cli_args_test_selection = ["tests/"]
-also_copy = ["claims.json", "README.md", "CHANGELOG.md"]
+also_copy = ["claims.json", "ci/check_claims.py", "README.md", "CHANGELOG.md"]
 
