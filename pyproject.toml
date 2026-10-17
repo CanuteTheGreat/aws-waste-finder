@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aws-waste-finder"
+dynamic = ["version"]
+description = "Read-only AWS cost-drain scanner across regions with estimated monthly savings"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.8"
+authors = [{ name = "Errant Solutions", email = "hello@errant.solutions" }]
+keywords = ["aws", "cost", "finops", "ebs", "cleanup"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = ["boto3>=1.26"]
+
+[project.urls]
+Homepage = "https://errant.solutions/tools/aws-waste-finder.html"
+Source = "https://git.canutethegreat.com/CanuteTheGreat/aws-waste-finder"
+Changelog = "https://git.canutethegreat.com/CanuteTheGreat/aws-waste-finder/src/branch/main/CHANGELOG.md"
+Releases = "https://git.canutethegreat.com/CanuteTheGreat/aws-waste-finder/releases"
+
+[project.scripts]
+aws-waste-finder = "aws_waste_finder:main"
+
+[tool.hatch.version]
+path = "aws_waste_finder.py"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["aws_waste_finder.py"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["aws_waste_finder.py", "README.md", "LICENSE", "CHANGELOG.md", "tests"]

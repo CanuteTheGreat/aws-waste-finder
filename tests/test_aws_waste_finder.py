@@ -85,11 +85,12 @@ class Base(unittest.TestCase):
         self.ec2 = client("ec2")
         self.ami = self.ec2.describe_images()["Images"][0]["ImageId"]
 
-    def findings(self, *args, expect_code=None):
+    def findings(self, *args, expect_code=None, raw=False):
         p = run("--json", *args)
         if expect_code is not None:
             self.assertEqual(p.returncode, expect_code, p.stdout + p.stderr)
-        return json.loads(p.stdout)
+        out = json.loads(p.stdout)
+        return out if raw else out["regions"][REGION]
 
     def instance(self, name=None):
         kw = {}
@@ -101,8 +102,10 @@ class Base(unittest.TestCase):
 
 class TestFindings(Base):
     def test_clean_account_exits_zero(self):
-        f = self.findings(expect_code=0)
+        out = self.findings(expect_code=0, raw=True)
+        f = out["regions"][REGION]
         self.assertTrue(all(v == [] for k, v in f.items() if isinstance(v, list)), f)
+        self.assertEqual((out["estimated_monthly_usd"], out["version"]), (0, json.loads(json.dumps(out))["version"]))
 
     def test_unattached_volume_flagged_attached_not(self):
         vol = self.ec2.create_volume(AvailabilityZone=REGION + "a", Size=17, VolumeType="gp3")
@@ -110,6 +113,7 @@ class TestFindings(Base):
         f = self.findings(expect_code=1)
         self.assertEqual([v["id"] for v in f["unattached_volumes"]], [vol["VolumeId"]])
         self.assertEqual(f["unattached_volumes"][0]["size_gb"], 17)
+        self.assertEqual(f["unattached_volumes"][0]["estimated_monthly_usd"], 1.36)  # 17 GB x $0.08 gp3
 
     def test_unassociated_eip_flagged_associated_not(self):
         idle = self.ec2.allocate_address(Domain="vpc")
@@ -117,6 +121,7 @@ class TestFindings(Base):
         self.ec2.associate_address(AllocationId=used["AllocationId"], InstanceId=self.instance()["InstanceId"])
         f = self.findings(expect_code=1)
         self.assertEqual([a["allocation_id"] for a in f["unassociated_eips"]], [idle["AllocationId"]])
+        self.assertEqual(f["unassociated_eips"][0]["estimated_monthly_usd"], 3.65)  # $0.005/h x 730 h
 
     def test_stopped_instance_flagged_running_not(self):
         stopped = self.instance("batch-box")["InstanceId"]
@@ -124,6 +129,11 @@ class TestFindings(Base):
         self.ec2.stop_instances(InstanceIds=[stopped])
         f = self.findings(expect_code=1)
         self.assertEqual([(i["id"], i["name"]) for i in f["stopped_instances"]], [(stopped, "batch-box")])
+        root = f["stopped_instances"][0]["volumes"]
+        self.assertEqual(len(root), 1)
+        vol = self.ec2.describe_volumes(VolumeIds=root)["Volumes"][0]
+        price = {"gp2": 0.10, "gp3": 0.08}[vol["VolumeType"]]
+        self.assertEqual(f["stopped_instances"][0]["estimated_monthly_usd"], round(vol["Size"] * price, 2))
 
     def test_old_snapshots_and_days_option(self):
         vol = self.ec2.create_volume(AvailabilityZone=REGION + "a", Size=5)
@@ -142,6 +152,7 @@ class TestFindings(Base):
         nat = self.ec2.create_nat_gateway(SubnetId=subnet, AllocationId=eip)["NatGateway"]["NatGatewayId"]
         f = self.findings(expect_code=1)
         self.assertEqual([(n["id"], n["vpc_id"]) for n in f["nat_gateways"]], [(nat, vpc)])
+        self.assertEqual(f["nat_gateways"][0]["estimated_monthly_usd"], 32.85)
 
     def test_idle_load_balancer_flagged_busy_one_not(self):
         elb = client("elbv2")
@@ -163,22 +174,67 @@ class TestFindings(Base):
         self.assertEqual(f["idle_load_balancers"][0]["arn"], idle["LoadBalancerArn"])
         self.assertNotIn("idle_load_balancers_error", f)
 
-    def test_rds_listed_for_review_only(self):
-        client("rds").create_db_instance(DBInstanceIdentifier="orders-db", DBInstanceClass="db.t3.micro",
-                                         Engine="postgres", AllocatedStorage=20, MasterUsername="u",
-                                         MasterUserPassword="testtesttest")
-        f = self.findings(expect_code=0)  # RDS never counts toward the exit code
-        self.assertEqual([(d["id"], d["class"]) for d in f["rds_instances_for_review"]],
-                         [("orders-db", "db.t3.micro")])
+    def test_rds_idle_vs_in_use(self):
+        rds = client("rds")
+        for name in ("orders-db", "forgotten-db"):
+            rds.create_db_instance(DBInstanceIdentifier=name, DBInstanceClass="db.t3.micro", Engine="postgres",
+                                   AllocatedStorage=20, MasterUsername="u", MasterUserPassword="testtesttest")
+        import datetime as dt
+        client("cloudwatch").put_metric_data(Namespace="AWS/RDS", MetricData=[{
+            "MetricName": "DatabaseConnections", "Value": 12, "Timestamp": dt.datetime.now(dt.timezone.utc),
+            "Dimensions": [{"Name": "DBInstanceIdentifier", "Value": "orders-db"}]}])
+        f = self.findings(expect_code=1)
+        self.assertEqual([(d["id"], d["max_connections"]) for d in f["rds_instances_for_review"]], [("orders-db", 12)])
+        idle = f["idle_rds_instances"]
+        self.assertEqual([d["id"] for d in idle], ["forgotten-db"])
+        self.assertEqual((idle[0]["max_connections"], idle[0]["storage_monthly_usd"]), (0, 2.0))
+
+    def test_gp2_unused_ami_eni_logs_and_classic_elb(self):
+        vol = self.ec2.create_volume(AvailabilityZone=REGION + "a", Size=100, VolumeType="gp2")
+        inst = self.instance()["InstanceId"]
+        self.ec2.attach_volume(VolumeId=vol["VolumeId"], InstanceId=inst, Device="/dev/sdf")
+        image = self.ec2.create_image(InstanceId=inst, Name="golden-2024")["ImageId"]
+        used = self.ec2.create_image(InstanceId=inst, Name="in-use")["ImageId"]
+        self.ec2.run_instances(ImageId=used, MinCount=1, MaxCount=1)
+        subnet = self.ec2.describe_subnets()["Subnets"][0]["SubnetId"]
+        eni = self.ec2.create_network_interface(SubnetId=subnet, Description="leftover")["NetworkInterface"]
+        logs = client("logs")
+        logs.create_log_group(logGroupName="/aws/lambda/deleted-fn")
+        elb = client("elb")
+        elb.create_load_balancer(LoadBalancerName="old-classic", AvailabilityZones=[REGION + "a"],
+                                 Listeners=[{"Protocol": "HTTP", "LoadBalancerPort": 80, "InstancePort": 80}])
+        f = self.findings(expect_code=1)
+        gp2 = {v["id"]: v for v in f["gp2_volumes"]}
+        self.assertEqual(gp2[vol["VolumeId"]]["estimated_monthly_usd"], 2.0)  # 100 GB x $0.02 difference
+        self.assertEqual([a["id"] for a in f["unused_amis"]], [image])
+        self.assertTrue(f["unused_amis"][0]["snapshots"])
+        self.assertIn(eni["NetworkInterfaceId"], [n["id"] for n in f["unattached_network_interfaces"]])
+        self.assertEqual([g["name"] for g in f["empty_log_groups"]], ["/aws/lambda/deleted-fn"])
+        classic = [lb for lb in f["idle_load_balancers"] if lb["type"] == "classic"]
+        self.assertEqual([(lb["name"], lb["estimated_monthly_usd"]) for lb in classic], [("old-classic", 18.25)])
+        self.assertGreater(f["estimated_monthly_usd"], 20)
 
     def test_text_report(self):
         self.ec2.allocate_address(Domain="vpc")
         p = run()
         self.assertEqual(p.returncode, 1, p.stderr)
         self.assertIn("=== Unassociated Elastic IPs (1) ===", p.stdout)
+        self.assertIn("~$3.65/mo", p.stdout)
         self.assertIn("=== Unattached EBS volumes (0) ===", p.stdout)
         self.assertIn("(none found)", p.stdout)
-        self.assertIn("RDS instances (review manually", p.stdout)
+        self.assertIn("Other RDS instances (review manually", p.stdout)
+        self.assertIn("Total: 1 finding(s), estimated waste ~$3.65/month across 1 region(s)", p.stdout)
+
+    def test_min_savings_gate_and_prices_override(self):
+        self.ec2.allocate_address(Domain="vpc")
+        self.assertEqual(run("--min-savings", "5").returncode, 0)   # $3.65 < $5
+        self.assertEqual(run("--min-savings", "3").returncode, 1)
+        prices = os.path.join(TMP, "prices.json")
+        with open(prices, "w") as fh:
+            json.dump({"public_ipv4_hour": 0.01}, fh)
+        out = self.findings("--prices", prices, raw=True)
+        self.assertEqual(out["estimated_monthly_usd"], 7.3)
+        self.assertEqual(run("--prices", "/nonexistent.json").returncode, 2)
 
 
 class TestOptionsAndErrors(Base):
@@ -186,9 +242,29 @@ class TestOptionsAndErrors(Base):
         self.ec2.allocate_address(Domain="vpc")
         p = run("--json", "--region", "us-east-1", env=base_env(AWS_DEFAULT_REGION=None))
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(json.loads(p.stdout)["unassociated_eips"], [])
+        self.assertEqual(json.loads(p.stdout)["regions"]["us-east-1"]["unassociated_eips"], [])
         p = run("--json", "--region", REGION, env=base_env(AWS_DEFAULT_REGION=None))
         self.assertEqual(p.returncode, 1, p.stderr)
+
+    def test_several_regions_and_all_regions(self):
+        self.ec2.allocate_address(Domain="vpc")
+        client("ec2", "eu-west-1").create_volume(AvailabilityZone="eu-west-1a", Size=10, VolumeType="gp3")
+        p = run("--json", "--region", "eu-west-1", "--region", REGION, env=base_env(AWS_DEFAULT_REGION=None))
+        self.assertEqual(p.returncode, 1, p.stderr)
+        out = json.loads(p.stdout)
+        self.assertEqual(sorted(out["regions"]), ["eu-west-1", REGION])
+        self.assertEqual(len(out["regions"]["eu-west-1"]["unattached_volumes"]), 1)
+        self.assertEqual(out["estimated_monthly_usd"], round(3.65 + 10 * 0.08, 2))
+        p = run("--json", "--all-regions", env=base_env(AWS_DEFAULT_REGION=None))
+        self.assertEqual(p.returncode, 1, p.stderr)
+        out = json.loads(p.stdout)
+        expected = {r["RegionName"] for r in client("ec2").describe_regions(
+            Filters=[{"Name": "opt-in-status", "Values": ["opt-in-not-required", "opted-in"]}])["Regions"]}
+        self.assertEqual(set(out["regions"]) | set(out["region_errors"]), expected)
+        self.assertGreater(len(out["regions"]), 10)
+        self.assertEqual(len(out["regions"]["eu-west-1"]["unattached_volumes"]), 1)
+        p = run("--all-regions", env=base_env(AWS_DEFAULT_REGION=None))
+        self.assertIn("##### eu-west-1", p.stdout)
 
     def test_profile_option(self):
         creds = os.path.join(TMP, "credentials")
@@ -202,7 +278,7 @@ class TestOptionsAndErrors(Base):
                        AWS_SHARED_CREDENTIALS_FILE=creds, AWS_CONFIG_FILE=conf)
         p = run("--json", "--profile", "waste", env=env)
         self.assertEqual(p.returncode, 1, p.stderr)
-        self.assertEqual(len(json.loads(p.stdout)["unassociated_eips"]), 1)
+        self.assertEqual(len(json.loads(p.stdout)["regions"][REGION]["unassociated_eips"]), 1)
         p = run("--profile", "nope", env=env)
         self.assertEqual(p.returncode, 2)
         self.assertIn("ERROR", p.stderr)
@@ -232,10 +308,13 @@ class TestOptionsAndErrors(Base):
         self.assertEqual(p.returncode, 2)
         self.assertIn("pip install boto3", p.stderr)
 
+    def test_version(self):
+        self.assertRegex(run("--version").stdout, r"^aws-waste-finder \d+\.\d+\.\d+$")
+
     def test_help(self):
         p = run("--help")
         self.assertEqual(p.returncode, 0)
-        for opt in ("--profile", "--region", "--days", "--json"):
+        for opt in ("--profile", "--region", "--days", "--json", "--all-regions", "--min-savings", "--idle-days", "--prices"):
             self.assertIn(opt, p.stdout)
 
 
@@ -250,9 +329,7 @@ class TestFailedCheckIsVisible(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("aws_waste_finder", TOOL)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        findings = {k: [] for k in ("unattached_volumes", "unassociated_eips", "stopped_instances",
-                                    "old_snapshots", "nat_gateways", "idle_load_balancers",
-                                    "rds_instances_for_review")}
+        findings = {k: [] for k, _, _ in mod.CATEGORIES}
         findings["idle_load_balancers_error"] = "AccessDenied: not authorized"
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
