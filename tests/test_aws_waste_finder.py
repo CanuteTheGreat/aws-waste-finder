@@ -272,6 +272,9 @@ class TestOptionsAndErrors(Base):
         self.assertEqual(sorted(out["regions"]), ["eu-west-1", REGION])
         self.assertEqual(len(out["regions"]["eu-west-1"]["unattached_volumes"]), 1)
         self.assertEqual(out["estimated_monthly_usd"], round(3.65 + 10 * 0.08, 2))
+        p = run("--region", "eu-west-1", "--region", REGION, env=base_env(AWS_DEFAULT_REGION=None))
+        self.assertIn("##### eu-west-1", p.stdout)  # the text report has a section per region
+        self.assertIn("##### " + REGION, p.stdout)
         p = run("--json", "--all-regions", env=base_env(AWS_DEFAULT_REGION=None))
         self.assertEqual(p.returncode, 1, p.stderr)
         out = json.loads(p.stdout)
@@ -280,8 +283,6 @@ class TestOptionsAndErrors(Base):
         self.assertEqual(set(out["regions"]) | set(out["region_errors"]), expected)
         self.assertGreater(len(out["regions"]), 10)
         self.assertEqual(len(out["regions"]["eu-west-1"]["unattached_volumes"]), 1)
-        p = run("--all-regions", env=base_env(AWS_DEFAULT_REGION=None))
-        self.assertIn("##### eu-west-1", p.stdout)
 
     def test_profile_option(self):
         creds = os.path.join(TMP, "credentials")
