@@ -1,0 +1,285 @@
+{
+ "offline": false,
+ "optional_imports": [
+  "boto3",
+  "botocore"
+ ],
+ "hidden_options": [],
+ "claims": [
+  {
+   "id": "ebs-unattached",
+   "text": "| Unattached EBS volumes |",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_unattached_volume_flagged_attached_not",
+    "tests/test_accuracy.py::TestMixedAccount::test_exact_findings_and_total"
+   ]
+  },
+  {
+   "id": "gp2",
+   "text": "| gp2 volumes (gp3 is ~20% cheaper) |",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_gp2_unused_ami_eni_logs_and_classic_elb",
+    "tests/test_accuracy.py::TestMixedAccount::test_exact_findings_and_total"
+   ]
+  },
+  {
+   "id": "eips",
+   "text": "| Unassociated Elastic IPs |",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_unassociated_eip_flagged_associated_not",
+    "tests/test_accuracy.py::TestMixedAccount::test_exact_findings_and_total"
+   ]
+  },
+  {
+   "id": "stopped",
+   "text": "| Stopped EC2 instances (EBS still billed) |",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_stopped_instance_flagged_running_not",
+    "tests/test_accuracy.py::TestMixedAccount::test_exact_findings_and_total"
+   ]
+  },
+  {
+   "id": "snapshots",
+   "text": "| Old EBS snapshots (default > 90 days; AMI-backed ones are marked) |",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_old_snapshots_and_days_option",
+    "tests/test_accuracy.py::TestMixedAccount::test_snapshot_of_unused_ami_counted_once"
+   ],
+   "flags": [
+    "--days"
+   ]
+  },
+  {
+   "id": "amis",
+   "text": "| AMIs you own that no instance uses |",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_gp2_unused_ami_eni_logs_and_classic_elb",
+    "tests/test_accuracy.py::TestMixedAccount::test_snapshot_of_unused_ami_counted_once"
+   ]
+  },
+  {
+   "id": "nat",
+   "text": "| NAT Gateways |",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_nat_gateway_flagged",
+    "tests/test_accuracy.py::TestMixedAccount::test_exact_findings_and_total"
+   ]
+  },
+  {
+   "id": "lbs",
+   "text": "| Idle ALB/NLB/GWLB (no healthy targets) and Classic ELBs (no InService instances) |",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_idle_load_balancer_flagged_busy_one_not",
+    "tests/test_aws_waste_finder.py::TestFindings::test_gp2_unused_ami_eni_logs_and_classic_elb",
+    "tests/test_accuracy.py::TestMixedAccount::test_exact_findings_and_total"
+   ]
+  },
+  {
+   "id": "rds",
+   "text": "| RDS instances with **no connections** for `--idle-days` (CloudWatch) |",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_rds_idle_vs_in_use",
+    "tests/test_accuracy.py::TestMixedAccount::test_exact_findings_and_total"
+   ],
+   "flags": [
+    "--idle-days"
+   ]
+  },
+  {
+   "id": "info",
+   "text": "| Unattached network interfaces, empty log groups, log groups with no retention | informational |",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_gp2_unused_ami_eni_logs_and_classic_elb"
+   ]
+  },
+  {
+   "id": "estimate-total",
+   "text": "**estimated monthly cost** for each finding and a total",
+   "tests": [
+    "tests/test_accuracy.py::TestMixedAccount::test_exact_findings_and_total",
+    "tests/test_aws_waste_finder.py::TestFindings::test_min_savings_gate_and_prices_override",
+    "tests/test_aws_waste_finder.py::TestFindings::test_text_report"
+   ],
+   "flags": [
+    "--prices"
+   ]
+  },
+  {
+   "id": "profile",
+   "text": "`--profile NAME` \u2014 AWS named profile",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_profile_option"
+   ],
+   "flags": [
+    "--profile"
+   ]
+  },
+  {
+   "id": "region",
+   "text": "`--region REGION` \u2014 region to scan, repeatable",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_region_option_scopes_the_scan",
+    "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_several_regions_and_all_regions"
+   ],
+   "flags": [
+    "--region"
+   ]
+  },
+  {
+   "id": "all-regions",
+   "text": "`--all-regions` \u2014 every region enabled for the account (scanned in parallel)",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_several_regions_and_all_regions"
+   ],
+   "flags": [
+    "--all-regions"
+   ]
+  },
+  {
+   "id": "days",
+   "text": "`--days N` \u2014 flag snapshots older than N days (default: 90)",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_old_snapshots_and_days_option"
+   ]
+  },
+  {
+   "id": "idle-days",
+   "text": "`--idle-days N` \u2014 RDS with no connections for N days is idle (default: 7)",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_rds_idle_vs_in_use",
+    "tests/test_accuracy.py::TestMixedAccount::test_exact_findings_and_total"
+   ]
+  },
+  {
+   "id": "min-savings",
+   "text": "`--min-savings USD` \u2014 exit 1 only when the estimated monthly total is at least USD",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_min_savings_gate_and_prices_override"
+   ],
+   "flags": [
+    "--min-savings"
+   ]
+  },
+  {
+   "id": "prices",
+   "text": "`--prices FILE` \u2014 JSON overriding the bundled prices",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_min_savings_gate_and_prices_override"
+   ]
+  },
+  {
+   "id": "json",
+   "text": "`--json` \u2014 `{\"version\", \"regions\": {region: findings}, \"region_errors\", \"estimated_monthly_usd\"}`",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_clean_account_exits_zero",
+    "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_several_regions_and_all_regions"
+   ],
+   "flags": [
+    "--json"
+   ]
+  },
+  {
+   "id": "exit-codes",
+   "text": "Exit codes: `0` nothing flagged",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_clean_account_exits_zero",
+    "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_no_region_is_friendly_error",
+    "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_no_credentials_is_friendly_error",
+    "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_api_error_is_friendly_error",
+    "tests/test_aws_waste_finder.py::TestFailedCheckIsVisible::test_text_report_shows_failed_check"
+   ]
+  },
+  {
+   "id": "read-only",
+   "text": "Never deletes, stops, or modifies any resource \u2014 report only.",
+   "tests": [
+    "tests/test_accuracy.py::TestReadOnly::test_only_documented_read_only_calls"
+   ]
+  },
+  {
+   "id": "iam",
+   "text": "Read-only IAM permissions: `ec2:Describe*`",
+   "tests": [
+    "tests/test_accuracy.py::TestReadOnly::test_only_documented_read_only_calls"
+   ]
+  },
+  {
+   "id": "rds-no-guess",
+   "text": "Never guesses about busy RDS instances \u2014 only ones with zero connections are flagged.",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_rds_idle_vs_in_use",
+    "tests/test_accuracy.py::TestMixedAccount::test_exact_findings_and_total"
+   ]
+  },
+  {
+   "id": "prices-note",
+   "text": "Prices are bundled us-east-1 on-demand list prices",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestFindings::test_min_savings_gate_and_prices_override"
+   ]
+  },
+  {
+   "id": "boto3",
+   "text": "`boto3` (the only dependency; pipx/Homebrew install it for you)",
+   "tests": [
+    "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_missing_boto3_message",
+    "ci/install-channels.sh#pipx install",
+    "repo:homebrew-errant-tools/Formula/aws-waste-finder.rb#boto3"
+   ]
+  },
+  {
+   "id": "stdlib-only",
+   "text": "stdlib-only Python 3.8+; needs `boto3`",
+   "tests": [
+    "tests/test_claims.py::TestClaims::test_stdlib_only"
+   ]
+  },
+  {
+   "id": "install-pipx",
+   "text": "pipx install git+https://git.canutethegreat.com/CanuteTheGreat/aws-waste-finder.git",
+   "tests": [
+    "ci/install-channels.sh#pipx install -q \"git+$FORGEJO/CanuteTheGreat/$REPO.git\"",
+    ".forgejo/workflows/nightly.yml#ci/install-channels.sh"
+   ]
+  },
+  {
+   "id": "install-homebrew",
+   "text": "brew install canutethegreat/errant-tools/aws-waste-finder",
+   "tests": [
+    "repo:homebrew-errant-tools/Formula/aws-waste-finder.rb#test do",
+    "repo:homebrew-errant-tools/.forgejo/workflows/test.yml#ci/run-tests.sh"
+   ]
+  },
+  {
+   "id": "install-scoop",
+   "text": "scoop install errant-tools/aws-waste-finder",
+   "tests": [
+    "repo:scoop-errant-tools/bucket/aws-waste-finder.json#\"bin\"",
+    "repo:scoop-errant-tools/.forgejo/workflows/test.yml#ci/run-tests.sh"
+   ]
+  },
+  {
+   "id": "install-download",
+   "text": "https://errant.solutions/downloads/aws_waste_finder.py",
+   "tests": [
+    "ci/install-channels.sh#https://errant.solutions/downloads/$FILE"
+   ]
+  },
+  {
+   "id": "release-assets",
+   "text": "`SHA256SUMS` file",
+   "tests": [
+    "ci/install-channels.sh#sha256sum -c SHA256SUMS",
+    "ci/release.py#SHA256SUMS"
+   ]
+  },
+  {
+   "id": "python-versions",
+   "text": "Python 3.8+",
+   "tests": [
+    ".forgejo/workflows/test.yml#python: [\"3.8",
+    ".forgejo/workflows/nightly.yml#python: [\"3.8"
+   ]
+  }
+ ]
+}

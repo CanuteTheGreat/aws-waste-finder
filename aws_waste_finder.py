@@ -234,7 +234,15 @@ def find_waste(session, region, snapshot_days, idle_days=7, prices=PRICES):
                 Statistics=["Maximum"])["Datapoints"]
             peak = max((p["Maximum"] for p in points), default=0)
             entry["max_connections"] = peak
-            if peak == 0 and db.get("DBInstanceStatus") == "available":
+            # "no connections for N days" needs metrics that cover the N days: a database created
+            # yesterday, or one CloudWatch has no data for, has not been idle for N days
+            first = min((p["Timestamp"] for p in points), default=None)
+            covered = first is not None and first <= now - datetime.timedelta(days=max(idle_days - 1, 0))
+            if peak == 0 and not covered:
+                entry["note"] = ("no DatabaseConnections metrics" if first is None else
+                                 "metrics only cover %.1f day(s)" % ((now - first).total_seconds() / 86400)) + \
+                                " of the last %d" % idle_days
+            if peak == 0 and covered and db.get("DBInstanceStatus") == "available":
                 storage = (db.get("AllocatedStorage") or 0) * ebs["gp2"]
                 entry["estimated_monthly_usd"] = None  # instance hours depend on class/engine: see the RDS price list
                 entry["storage_monthly_usd"] = money(storage)
@@ -256,8 +264,20 @@ def find_waste(session, region, snapshot_days, idle_days=7, prices=PRICES):
                     "estimated_monthly_usd": money(stored / 1e9 * prices["cloudwatch_logs_gb_month"])})
     _check(f, "empty_log_groups", log_groups)
 
+    # the same dollars must not be counted twice in the total: a stopped instance's gp2 volume
+    # (its whole cost is already in stopped_instances) and an old snapshot that belongs to an
+    # unused AMI (already in unused_amis) stay listed but are marked and left out of the sum
+    stopped_vols = {v for i in f["stopped_instances"] for v in i["volumes"]}
+    for v in f["gp2_volumes"]:
+        if v["id"] in stopped_vols:
+            v["counted_in"] = "stopped_instances"
+    ami_snaps = {s for a in f["unused_amis"] for s in a["snapshots"]}
+    for snap in f["old_snapshots"]:
+        if snap["id"] in ami_snaps:
+            snap["counted_in"] = "unused_amis"
     f["estimated_monthly_usd"] = money(sum(i.get("estimated_monthly_usd") or 0
-                                           for k, _, gate in CATEGORIES if gate for i in f[k]))
+                                           for k, _, gate in CATEGORIES if gate for i in f[k]
+                                           if "counted_in" not in i))
     return f
 
 
@@ -284,7 +304,8 @@ def print_report(findings, region=None):
             return
         for it in items:
             cost = it.get("estimated_monthly_usd")
-            print("  " + fmt(it) + (f"   ~${cost:,.2f}/mo" if cost else ""))
+            note = f" (already counted in {it['counted_in'].replace('_', ' ')})" if it.get("counted_in") else ""
+            print("  " + fmt(it) + (f"   ~${cost:,.2f}/mo{note}" if cost else ""))
 
     fmts = {
         "unattached_volumes": lambda v: f"{v['id']}  {v['size_gb']}GB {v['type']}  created {v['created']}",
@@ -299,7 +320,8 @@ def print_report(findings, region=None):
         "idle_rds_instances": lambda d: f"{d['id']}  {d['class']}  {d['storage_gb']}GB  0 connections in {d['idle_days']}d"
                                         f"  (storage ~${d['storage_monthly_usd']:,.2f}/mo + instance hours)",
         "rds_instances_for_review": lambda d: f"{d['id']}  {d['class']}  {d['storage_gb']}GB  multi_az={d['multi_az']}"
-                                              f"  peak connections={d.get('max_connections')}",
+                                              f"  peak connections={d.get('max_connections')}"
+                                              + (f"  ({d['note']})" if d.get("note") else ""),
         "unattached_network_interfaces": lambda n: f"{n['id']}  {n['description']}" + (f"  public {n['public_ip']}" if n.get("public_ip") else ""),
         "empty_log_groups": lambda g: g["name"],
         "log_groups_without_retention": lambda g: f"{g['name']}  {g['stored_gb']}GB",

@@ -40,4 +40,11 @@ path = "aws_waste_finder.py"
 only-include = ["aws_waste_finder.py"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["aws_waste_finder.py", "README.md", "LICENSE", "CHANGELOG.md", "tests"]
+only-include = ["aws_waste_finder.py", "README.md", "LICENSE", "CHANGELOG.md", "tests", "claims.json"]
+
+[tool.mutmut]
+# ci/mutation.sh (nightly workflow)
+source_paths = ["aws_waste_finder.py"]
+pytest_add_cli_args_test_selection = ["tests/"]
+also_copy = ["claims.json", "README.md", "CHANGELOG.md"]
+

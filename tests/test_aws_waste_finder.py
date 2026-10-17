@@ -180,9 +180,15 @@ class TestFindings(Base):
             rds.create_db_instance(DBInstanceIdentifier=name, DBInstanceClass="db.t3.micro", Engine="postgres",
                                    AllocatedStorage=20, MasterUsername="u", MasterUserPassword="testtesttest")
         import datetime as dt
-        client("cloudwatch").put_metric_data(Namespace="AWS/RDS", MetricData=[{
-            "MetricName": "DatabaseConnections", "Value": 12, "Timestamp": dt.datetime.now(dt.timezone.utc),
+        now = dt.datetime.now(dt.timezone.utc)
+        cw = client("cloudwatch")
+        cw.put_metric_data(Namespace="AWS/RDS", MetricData=[{
+            "MetricName": "DatabaseConnections", "Value": 12, "Timestamp": now,
             "Dimensions": [{"Name": "DBInstanceIdentifier", "Value": "orders-db"}]}])
+        # RDS publishes DatabaseConnections all the time, 0 when nobody is connected
+        cw.put_metric_data(Namespace="AWS/RDS", MetricData=[{
+            "MetricName": "DatabaseConnections", "Value": 0, "Timestamp": now - dt.timedelta(days=d, hours=1),
+            "Dimensions": [{"Name": "DBInstanceIdentifier", "Value": "forgotten-db"}]} for d in range(7)])
         f = self.findings(expect_code=1)
         self.assertEqual([(d["id"], d["max_connections"]) for d in f["rds_instances_for_review"]], [("orders-db", 12)])
         idle = f["idle_rds_instances"]
