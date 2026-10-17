@@ -37,6 +37,14 @@ def setUpModule():
     TMP = tempfile.mkdtemp()
     port = _free_port()
     ENDPOINT = f"http://127.0.0.1:{port}"
+    if os.environ.get("MUTANT_UNDER_TEST"):
+        # mutation testing runs this module once per mutant in a forked child of a process that has
+        # already imported moto: an in-process server starts in milliseconds where a fresh
+        # `python -m moto.server` spends most of each mutant's run importing its backends
+        from moto.server import ThreadedMotoServer
+        SERVER = ThreadedMotoServer(ip_address="127.0.0.1", port=port, verbose=False)
+        SERVER.start()
+        return
     log = open(os.path.join(TMP, "moto.log"), "w")
     SERVER = subprocess.Popen([sys.executable, "-m", "moto.server", "-H", "127.0.0.1", "-p", str(port)],
                               stdout=log, stderr=subprocess.STDOUT)
@@ -55,6 +63,9 @@ def setUpModule():
 
 
 def tearDownModule():
+    if not isinstance(SERVER, subprocess.Popen):
+        SERVER.stop()
+        return
     SERVER.terminate()
     SERVER.wait(10)
 
