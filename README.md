@@ -39,7 +39,7 @@ real waste (see below).
 
 ```sh
 pipx install git+https://git.canutethegreat.com/CanuteTheGreat/aws-waste-finder.git        # latest release branch; puts `aws-waste-finder` on PATH
-pipx install git+https://git.canutethegreat.com/CanuteTheGreat/aws-waste-finder.git@v1.2.0  # a pinned release
+pipx install git+https://git.canutethegreat.com/CanuteTheGreat/aws-waste-finder.git@v1.2.1  # a pinned release
 brew install canutethegreat/errant-tools/aws-waste-finder   # after: brew tap canutethegreat/errant-tools https://git.canutethegreat.com/CanuteTheGreat/homebrew-errant-tools
 scoop install errant-tools/aws-waste-finder                 # after: scoop bucket add errant-tools https://git.canutethegreat.com/CanuteTheGreat/scoop-errant-tools
 ```

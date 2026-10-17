@@ -40,7 +40,7 @@ Exit codes: 0 = nothing found (or total estimated savings below --min-savings),
 
 License: MIT (see LICENSE)
 """
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 import argparse
 import concurrent.futures

@@ -2,7 +2,7 @@
 
 All notable changes. Versions are git tags; each tag has a Forgejo release with checksums.
 
-## Unreleased
+## 1.2.1 - 2026-10-17
 
 - The estimated total no longer counts the same dollars twice: a stopped instance's gp2 volume (already in the stopped instance's cost) and an old snapshot that belongs to an unused AMI (already in the AMI's cost) stay listed, marked `counted_in`, but are left out of the sum.
 - An RDS instance is only reported idle when its CloudWatch DatabaseConnections metrics cover the whole `--idle-days` window and are all zero; a database with no metrics yet (e.g. created yesterday) goes to the review list with a note instead of being flagged.
