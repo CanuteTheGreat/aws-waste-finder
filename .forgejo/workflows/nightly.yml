@@ -15,7 +15,7 @@ jobs:
     # colo-only lane (rw-man-01, ctg-infrastructure ci-runners/rw-man-colo): mutation / chaos /
     # security-tool / network-probing CI never runs on the EC2 hosts rw-man-02..05 (GuardDuty).
     runs-on: colo-x86_64
-    timeout-minutes: 150
+    timeout-minutes: 210  # ~55 min on an idle arm64 host, >2 h on the shared colo lane (cpu-shares 256)
     steps:
       - uses: actions/checkout@v4
       - name: Mutation testing (mutmut, capped container)
