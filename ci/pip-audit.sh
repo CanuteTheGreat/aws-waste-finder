@@ -25,6 +25,10 @@ docker exec -w /src "$NAME" sh -ec '
     # extra packages the single-file download needs (what a user installs next to the file)
     /tmp/target/bin/pip install -q --disable-pip-version-check $(grep -v "^#" ci/download-deps)
   fi
+  # the tool itself is not on PyPI: audit its dependency closure, not the tool
+  PKG=$(sed -n "s/^name = \"\(.*\)\"/\1/p" pyproject.toml | head -1)
+  /tmp/target/bin/pip uninstall -q -y "$PKG"
+  /tmp/target/bin/pip list --format=freeze
   python -m venv /tmp/auditor
   /tmp/auditor/bin/pip install -q --disable-pip-version-check pip-audit
   IGN=""
