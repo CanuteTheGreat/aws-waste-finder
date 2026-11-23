@@ -169,7 +169,7 @@
   },
   {
    "id": "json",
-   "text": "`--json` \u2014 `{\"version\", \"regions\": {region: findings}, \"region_errors\", \"estimated_monthly_usd\"}`",
+   "text": "`--json` \u2014 `{\"schema_version\", \"tool\", \"version\", \"exit_code\", \"regions\"",
    "tests": [
     "tests/test_aws_waste_finder.py::TestFindings::test_clean_account_exits_zero",
     "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_several_regions_and_all_regions"
@@ -180,13 +180,41 @@
   },
   {
    "id": "exit-codes",
-   "text": "Exit codes: `0` nothing flagged",
+   "text": "`0` nothing flagged",
    "tests": [
     "tests/test_aws_waste_finder.py::TestFindings::test_clean_account_exits_zero",
     "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_no_region_is_friendly_error",
     "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_no_credentials_is_friendly_error",
     "tests/test_aws_waste_finder.py::TestOptionsAndErrors::test_api_error_is_friendly_error",
-    "tests/test_aws_waste_finder.py::TestFailedCheckIsVisible::test_text_report_shows_failed_check"
+    "tests/test_aws_waste_finder.py::TestFailedCheckIsVisible::test_text_report_shows_failed_check",
+    "tests/test_cli_contract.py::TestExitCodes::test_clean_is_0",
+    "tests/test_cli_contract.py::TestExitCodes::test_findings_is_1",
+    "tests/test_cli_contract.py::TestExitCodes::test_min_savings_above_the_waste_is_0",
+    "tests/test_cli_contract.py::TestExitCodes::test_bad_args_is_2_with_message_on_stderr",
+    "tests/test_cli_contract.py::TestExitCodes::test_missing_prices_file_is_2",
+    "tests/test_cli_contract.py::TestExitCodes::test_aws_not_configured_keeps_documented_legacy_code_2",
+    "tests/test_cli_contract.py::TestExitCodes::test_unexpected_error_is_3_on_stderr_not_a_traceback_exit_1"
+   ]
+  },
+  {
+   "id": "quiet",
+   "text": "print nothing on stdout, so the exit code is the whole answer",
+   "flags": [
+    "--quiet"
+   ],
+   "tests": [
+    "tests/test_cli_contract.py::TestQuiet::test_quiet_prints_nothing_but_keeps_exit_code",
+    "tests/test_cli_contract.py::TestQuiet::test_without_quiet_the_report_is_printed"
+   ]
+  },
+  {
+   "id": "json-schema",
+   "text": "`schema_version` is currently 1",
+   "tests": [
+    "tests/test_cli_contract.py::TestJson::test_clean",
+    "tests/test_cli_contract.py::TestJson::test_findings",
+    "tests/test_cli_contract.py::TestJson::test_usage_error_leaves_stdout_empty",
+    "tests/test_cli_contract.py::TestJson::test_schema_rejects_a_document_without_the_contract_keys"
    ]
   },
   {

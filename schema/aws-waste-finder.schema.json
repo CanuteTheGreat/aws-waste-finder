@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "aws-waste-finder --json output (schema_version 1)",
+  "type": "object",
+  "required": ["schema_version", "tool", "version", "exit_code", "regions", "region_errors", "estimated_monthly_usd", "prices"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "tool": {"type": "string", "const": "aws-waste-finder"},
+    "version": {"type": "string"},
+    "exit_code": {"type": "integer", "enum": [0, 1]},
+    "regions": {"type": "object"},
+    "region_errors": {"type": "object"},
+    "estimated_monthly_usd": {"type": "number", "minimum": 0},
+    "prices": {"type": "string"}
+  }
+}

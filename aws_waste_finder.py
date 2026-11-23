@@ -35,12 +35,15 @@ instance role). Needs read-only IAM permissions: ec2:Describe*,
 elasticloadbalancing:Describe*, rds:Describe*, cloudwatch:GetMetricStatistics,
 logs:DescribeLogGroups.
 
-Exit codes: 0 = nothing found (or total estimated savings below --min-savings),
-1 = waste found, 2 = no region/credentials, or every requested region failed.
+Exit codes (shared CLI contract, docs/CLI-CONTRACT.md): 0 = nothing found (or total estimated
+savings below --min-savings), 1 = waste found, 2 = usage error, or (legacy, kept) no
+region/credentials/AWS unreachable or every requested region failed, 3 = unexpected runtime
+error. --json prints one object with schema_version, tool, version and exit_code; --quiet
+prints nothing on stdout.
 
 License: MIT (see LICENSE)
 """
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 
 import argparse
 import concurrent.futures
@@ -333,9 +336,18 @@ def print_report(findings, region=None):
 
 
 def main(argv=None):
+    """Entry point. Any unexpected exception is a runtime error (exit 3), never a bare traceback exit 1."""
+    try:
+        return _main(argv)
+    except Exception as exc:  # SystemExit (argparse usage errors, exit 2) is not an Exception
+        print("aws-waste-finder: error: %s: %s" % (type(exc).__name__, exc), file=sys.stderr)
+        return 3
+
+
+def _main(argv=None):
     p = argparse.ArgumentParser(prog="aws-waste-finder",
                                 description="Find common silent AWS cost drains (read-only, report only).",
-                                epilog="Exit codes: 0 nothing found, 1 waste found, 2 configuration error or every region failed.")
+                                epilog="Exit codes: 0 nothing found, 1 waste found, 2 usage or configuration error or every region failed, 3 unexpected error.")
     p.add_argument("--version", action="version", version="%(prog)s " + __version__)
     p.add_argument("--profile", default=None, help="AWS named profile (default: default credentials chain)")
     p.add_argument("--region", action="append", default=None,
@@ -348,6 +360,8 @@ def main(argv=None):
                    help="exit 1 only when the estimated monthly waste is at least USD (default: any finding)")
     p.add_argument("--prices", metavar="FILE", help="JSON file overriding the bundled us-east-1 prices")
     p.add_argument("--json", action="store_true", help="Output JSON instead of a human report")
+    p.add_argument("-q", "--quiet", action="store_true",
+                   help="print nothing on stdout; the exit code (and errors on stderr) are the result")
     args = p.parse_args(argv)
 
     prices = PRICES
@@ -411,10 +425,14 @@ def main(argv=None):
 
     total = money(sum(r["estimated_monthly_usd"] or 0 for r in results.values()))
     flagged = sum(len(r[k]) for r in results.values() for k, _, gate in CATEGORIES if gate)
-    out = {"version": __version__, "regions": {k: results[k] for k in sorted(results)},
+    code = 1 if flagged and total >= args.min_savings else 0
+    out = {"schema_version": 1, "tool": "aws-waste-finder", "version": __version__, "exit_code": code,
+           "regions": {k: results[k] for k in sorted(results)},
            "region_errors": errors, "estimated_monthly_usd": total,
            "prices": "bundled us-east-1 list prices" if prices is PRICES else "from " + args.prices}
-    if args.json:
+    if args.quiet:
+        pass
+    elif args.json:
         print(json.dumps(out, indent=2, default=str))
     else:
         for r in sorted(results):
@@ -423,7 +441,7 @@ def main(argv=None):
             print(f"\n##### {r}: scan FAILED ({e})")
         print(f"\nTotal: {flagged} finding(s), estimated waste ~${total:,.2f}/month across {len(results)} region(s) "
               "(us-east-1 list prices; RDS instance hours not included)")
-    return 1 if flagged and total >= args.min_savings else 0
+    return code
 
 
 if __name__ == "__main__":

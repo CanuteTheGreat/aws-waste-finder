@@ -39,7 +39,7 @@ real waste (see below).
 
 ```sh
 pipx install git+https://git.canutethegreat.com/CanuteTheGreat/aws-waste-finder.git        # latest release branch; puts `aws-waste-finder` on PATH
-pipx install git+https://git.canutethegreat.com/CanuteTheGreat/aws-waste-finder.git@v1.2.1  # a pinned release
+pipx install git+https://git.canutethegreat.com/CanuteTheGreat/aws-waste-finder.git@v1.3.0  # a pinned release
 brew install canutethegreat/errant-tools/aws-waste-finder   # after: brew tap canutethegreat/errant-tools https://git.canutethegreat.com/CanuteTheGreat/homebrew-errant-tools
 scoop install errant-tools/aws-waste-finder                 # after: scoop bucket add errant-tools https://git.canutethegreat.com/CanuteTheGreat/scoop-errant-tools
 ```
@@ -68,12 +68,13 @@ Options:
 - `--idle-days N` — RDS with no connections for N days is idle (default: 7)
 - `--min-savings USD` — exit 1 only when the estimated monthly total is at least USD
 - `--prices FILE` — JSON overriding the bundled prices (same keys as `PRICES` in the script), e.g. your region's
-- `--json` — `{"version", "regions": {region: findings}, "region_errors", "estimated_monthly_usd"}`
+- `--json` — `{"schema_version", "tool", "version", "exit_code", "regions": {region: findings}, "region_errors", "estimated_monthly_usd", "prices"}`; `schema_version` is currently 1 and the JSON Schema is [schema/aws-waste-finder.schema.json](schema/aws-waste-finder.schema.json)
+- `--quiet` (`-q`) — print nothing on stdout, so the exit code is the whole answer; errors always go to stderr
 
-Exit codes: `0` nothing flagged (informational categories and RDS review entries don't count, nor does
-waste below `--min-savings`), `1` waste found, `2` AWS can't be reached or isn't configured (no region, no
+Exit codes (the shared Errant Solutions CLI contract, see [docs/CLI-CONTRACT.md](docs/CLI-CONTRACT.md)): `0` nothing flagged (informational categories and RDS review entries don't count, nor does
+waste below `--min-savings`), `1` waste found, `2` bad usage, or (legacy, kept so existing scripts keep working) AWS can't be reached or isn't configured (no region, no
 credentials, unknown profile, API error, or every requested region failed) -- with a one-line explanation,
-not a traceback. A region that fails during `--all-regions` is listed in `region_errors` and the others are
+not a traceback, `3` unexpected runtime error. A region that fails during `--all-regions` is listed in `region_errors` and the others are
 still reported; a single check that fails (e.g. a missing IAM permission) is shown as "check FAILED" in its
 section instead of "(none found)". Every listing is fully paginated.
 
