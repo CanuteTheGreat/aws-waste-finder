@@ -16,6 +16,12 @@
 #   ci/mutation.sh               # python 3.13
 #   ci/mutation.sh 3.13 report   # also print every surviving mutant's diff
 #
+# Parts (MUT_PART=k/n, env): the mutant list is split in n parts run by n SEQUENTIAL jobs, because
+# Forgejo ends any task after ~3 h (a 426-mutant run on a busy shared host takes longer: aws-waste-finder
+# run 79 died at 200 min with exit 137). Same mutants, same floor and gate: part k<n runs its share and
+# hands the mutants/**/*.meta results so far (.mutation-part/meta.tar, cumulative) to the next job; part n restores them,
+# runs its share, then exports the stats of ALL mutants and applies the floor / new-survivor gate.
+#
 # tests/conftest.py makes the suite's `subprocess.run([sys.executable, TOOL, ...])`
 # calls run the mutated tool in-process while mutmut drives pytest, so mutmut can
 # see which test exercises which function (unittest ignores conftest.py).
@@ -28,6 +34,16 @@ set -eu
 # that one variable (workflow env or runner envs:) re-enables the colo-only rule.
 if [ "${CI_COLO_ONLY:-0}" = 1 ] && [ "$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)" = "Amazon EC2" ]; then
   echo "mutation testing refused: this is an EC2 host; run it on the colo lane (rw-man-01)" >&2
+  exit 1
+fi
+PART=1
+PARTS=1
+if [ -n "${MUT_PART:-}" ]; then
+  PART="${MUT_PART%/*}"
+  PARTS="${MUT_PART#*/}"
+fi
+if [ "$PART" -lt 1 ] || [ "$PART" -gt "$PARTS" ]; then
+  echo "bad MUT_PART=${MUT_PART:-} (want k/n with 1 <= k <= n)" >&2
   exit 1
 fi
 PY="${1:-3.13}"
@@ -70,8 +86,13 @@ trap cleanup EXIT INT TERM
 docker run -d --name "$NAME" --memory "$MEMORY" --memory-swap "$MEMORY" --cpus 3 --pids-limit 2048 \
   ${EXTRA_DOCKER_ARGS:-} "$IMAGE" sleep 14400 >/dev/null
 docker cp . "$NAME:/src"
+if [ "$PART" -gt 1 ]; then
+  # the earlier parts' results; a missing hand-over must fail loudly, never run on an empty one
+  [ -f .mutation-part/meta.tar ] || { echo "MUTATION: part $PART/$PARTS needs .mutation-part/meta.tar from the earlier part(s)" >&2; exit 1; }
+  docker cp .mutation-part/meta.tar "$NAME:/tmp/part-meta.tar"
+fi
 rc=0
-docker exec -w /src -e MIN="$MIN" -e REPORT="$REPORT" -e CHILDREN="$CHILDREN" -e SAMPLE="$SAMPLE" -e DATA_KB="$DATA_KB" \
+docker exec -w /src -e MIN="$MIN" -e REPORT="$REPORT" -e CHILDREN="$CHILDREN" -e SAMPLE="$SAMPLE" -e PART="$PART" -e PARTS="$PARTS" -e DATA_KB="$DATA_KB" \
   -e MODE="$MODE" -e DIFF="$DIFF" -e MUT_ID="$MUT_ID" "$NAME" sh -ec '
   # the checkout belongs to the runner uid; mutmut and the gate read git history
   git config --global --add safe.directory "*"
@@ -79,7 +100,7 @@ docker exec -w /src -e MIN="$MIN" -e REPORT="$REPORT" -e CHILDREN="$CHILDREN" -e
   pip install -q --disable-pip-version-check --root-user-action=ignore "mutmut==3.8.0" "pytest>=8,<9" >/dev/null
   rm -rf mutants
   NAMES=""
-  if [ "$MODE" = incremental ] || [ "$SAMPLE" -gt 1 ]; then
+  if [ "$MODE" = incremental ] || [ "$SAMPLE" -gt 1 ] || [ "$PARTS" -gt 1 ]; then
     # generate the mutants and the test->function map (a filter that matches nothing stops
     # mutmut right after that), then pick the mutants to run
     mutmut run "__generate_only__" > /tmp/mutmut-gen.log 2>&1 || true
@@ -88,11 +109,16 @@ docker exec -w /src -e MIN="$MIN" -e REPORT="$REPORT" -e CHILDREN="$CHILDREN" -e
     NAMES=$(python3 ci/mutation-incremental.py mutmut-targets --diff "$DIFF" --mutants mutants --sample "$SAMPLE")
     if [ -z "$NAMES" ]; then
       echo "MUTATION: no mutants in the code changed since the last green run"
+      if [ "$PART" -lt "$PARTS" ]; then
+        # the last part applies the (empty) gate; hand it an empty result set
+        tar -cf /tmp/part-meta.tar --files-from /dev/null
+        exit 0
+      fi
       python3 ci/mutation-incremental.py gate --id "$MUT_ID" --kind mutmut --mode incremental --allow-empty -- mutants
       exit 0
     fi
     echo "MUTATION INCREMENTAL: $(echo $NAMES | wc -w) mutants of the changed code"
-  elif [ "$SAMPLE" -gt 1 ]; then
+  elif [ "$SAMPLE" -gt 1 ] || [ "$PARTS" -gt 1 ]; then
     NAMES=$(python - <<EOF
 import glob, json, os, zlib
 keys = sorted(k for p in glob.glob("mutants/**/*.meta", recursive=True)
@@ -104,10 +130,27 @@ EOF
     [ -n "$NAMES" ] || { echo "no mutants generated"; tail -c 4000 /tmp/mutmut-gen.log; exit 1; }
     echo "MUTATION SAMPLE: 1 in $SAMPLE -> $(echo $NAMES | wc -w) mutants"
   fi
+  if [ "$PARTS" -gt 1 ]; then
+    # part k of n = every n-th mutant of the sorted list (the parts together are exactly the full list)
+    ALL=$(echo $NAMES | wc -w)
+    # shellcheck disable=SC2086
+    NAMES=$(python3 -c "import os, sys; k = sorted(sys.argv[1:]); print(\" \".join(k[int(os.environ[\"PART\"]) - 1::int(os.environ[\"PARTS\"])]))" $NAMES)
+    [ -n "$NAMES" ] || { echo "MUTATION: part $PART/$PARTS has no mutants"; exit 1; }
+    echo "MUTATION PART $PART/$PARTS: $(echo $NAMES | wc -w) of $ALL mutants"
+  fi
+  if [ "$PART" -gt 1 ]; then
+    tar -xf /tmp/part-meta.tar -C /src
+  fi
   # shellcheck disable=SC2086
   ulimit -d "$DATA_KB"
   echo "MUTATION: per-process data cap $((DATA_KB / 1024)) MiB ($CHILDREN children)"
   mutmut run --max-children "$CHILDREN" $NAMES > /tmp/mutmut.log 2>&1 || { tail -c 4000 /tmp/mutmut.log; exit 1; }
+  if [ "$PART" -lt "$PARTS" ]; then
+    # not the last part: hand the results over; the floor and the gate need every mutant
+    find mutants -name "*.meta" | tar -cf /tmp/part-meta.tar -T -
+    echo "MUTATION PART $PART/$PARTS done"
+    exit 0
+  fi
   mutmut export-cicd-stats >/dev/null
   rc=0
   if [ "$MODE" = full ]; then
@@ -135,7 +178,10 @@ EOF
   exit $rc
 ' || rc=$?
 # the new baseline (nightly.yml caches .mutation-baseline when the job succeeds)
-if [ $rc = 0 ]; then
+if [ $rc = 0 ] && [ "$PART" -lt "$PARTS" ]; then
+  mkdir -p .mutation-part
+  docker cp "$NAME:/tmp/part-meta.tar" .mutation-part/meta.tar
+elif [ $rc = 0 ]; then
   mkdir -p .mutation-baseline
   docker cp "$NAME:/src/.mutation-baseline/$MUT_ID" .mutation-baseline/ 2>/dev/null || true
 fi

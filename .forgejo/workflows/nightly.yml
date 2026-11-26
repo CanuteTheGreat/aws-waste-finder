@@ -25,11 +25,80 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The mutant list is split in three parts run by three sequential jobs (ci/mutation.sh MUT_PART): Forgejo
+  # ends any task after ~3 h and the whole 426-mutant run takes longer than that on a busy shared host
+  # (run 79: killed at 200 min, exit 137). Same mutants, same floor, same gate: the last part applies them to
+  # the results of all parts.
+  mutation-part1:
+    runs-on: mutation-any
+    timeout-minutes: 170
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Mutation baseline (last green run)
+        uses: actions/cache@v4
+        with:
+          path: .mutation-baseline
+          # part 1 never records a baseline; its own key keeps the final job's key free to save
+          key: mutation-baseline-part1-aws-waste-finder-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: mutation-baseline-aws-waste-finder-
+      - name: Full or incremental?
+        # full every Sunday (UTC) and on demand; other nights only the functions changed since the
+        # last green run (ctg-infrastructure ci-runners/mutation-incremental)
+        run: python3 ci/mutation-incremental.py plan --id aws-waste-finder --kind mutmut --full-dow 7 --mode "${{ github.event.inputs.mode }}" -- aws_waste_finder.py tests pyproject.toml ci/setup.sh
+      - name: Mutation testing, part 1 of 3 (mutmut, capped container)
+        if: env.MUT_MODE != 'skip'
+        run: MUT_PART=1/3 sh ci/mutation.sh 3.13
+      - name: Hand the part-1 results on
+        if: env.MUT_MODE != 'skip'
+        uses: actions/upload-artifact@v3
+        with:
+          name: mutation-part1
+          path: .mutation-part/meta.tar
+          retention-days: 2
+          if-no-files-found: error
+
+  mutation-part2:
+    needs: mutation-part1
+    runs-on: mutation-any
+    timeout-minutes: 170
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Mutation baseline (last green run)
+        uses: actions/cache@v4
+        with:
+          path: .mutation-baseline
+          key: mutation-baseline-part2-aws-waste-finder-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: mutation-baseline-aws-waste-finder-
+      - name: Full or incremental?
+        run: python3 ci/mutation-incremental.py plan --id aws-waste-finder --kind mutmut --full-dow 7 --mode "${{ github.event.inputs.mode }}" -- aws_waste_finder.py tests pyproject.toml ci/setup.sh
+      - name: Part-1 results
+        if: env.MUT_MODE != 'skip'
+        uses: actions/download-artifact@v3
+        with:
+          name: mutation-part1
+          path: .mutation-part
+      - name: Mutation testing, part 2 of 3 (mutmut, capped container)
+        if: env.MUT_MODE != 'skip'
+        run: MUT_PART=2/3 sh ci/mutation.sh 3.13
+      - name: Hand the part-1+2 results on
+        if: env.MUT_MODE != 'skip'
+        uses: actions/upload-artifact@v3
+        with:
+          name: mutation-part2
+          path: .mutation-part/meta.tar
+          retention-days: 2
+          if-no-files-found: error
+
   mutation:
+    needs: mutation-part2
     # shared mutation/chaos lane (arch-independent, so x86 and arm64 slots on rw-man-01..05 since 2026-10-18,
     # ctg-infrastructure ci-runners/README.md); jobs that must stay on colo set CI_COLO_ONLY=1.
     runs-on: mutation-any
-    timeout-minutes: 210  # ~55 min on an idle arm64 host, >2 h on the shared colo lane (cpu-shares 256)
+    timeout-minutes: 170  # a third of the mutants (parts 1 and 2 run the rest)
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,9 +115,15 @@ jobs:
         # full every Sunday (UTC) and on demand; other nights only the functions changed since the
         # last green run (ctg-infrastructure ci-runners/mutation-incremental)
         run: python3 ci/mutation-incremental.py plan --id aws-waste-finder --kind mutmut --full-dow 7 --mode "${{ github.event.inputs.mode }}" -- aws_waste_finder.py tests pyproject.toml ci/setup.sh
-      - name: Mutation testing (mutmut, capped container)
+      - name: Part-1+2 results
         if: env.MUT_MODE != 'skip'
-        run: sh ci/mutation.sh 3.13
+        uses: actions/download-artifact@v3
+        with:
+          name: mutation-part2
+          path: .mutation-part
+      - name: Mutation testing, part 3 of 3 and the floor / new-survivor gate (mutmut, capped container)
+        if: env.MUT_MODE != 'skip'
+        run: MUT_PART=3/3 sh ci/mutation.sh 3.13
 
   python-matrix:
     # colo-light: a short test run in ci/run-tests.sh's own 1g container, like test.yml; colo-x86_64's
