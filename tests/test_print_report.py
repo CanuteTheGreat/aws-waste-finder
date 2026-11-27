@@ -298,12 +298,10 @@ GOLDEN = {
 
 
 class TestPrintReportGolden(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.out = outputs()
-
+    # outputs() is called inside each test body (not setUpClass): mutmut maps a mutant to the
+    # tests that call the function during the test itself, so a class-level cache is "no test".
     def check(self, name):
-        self.assertEqual(self.out[name], "".join(GOLDEN[name]))
+        self.assertEqual(outputs()[name], "".join(GOLDEN[name]))
 
     def test_full_report_without_region(self):
         self.check("FULL")
@@ -321,8 +319,23 @@ class TestPrintReportGolden(unittest.TestCase):
         self.check("EMPTY")
 
     def test_region_header_absent_without_region(self):
-        self.assertNotIn("#####", self.out["FULL"])
-        self.assertTrue(self.out["REGION"].startswith("\n##### eu-west-1  (estimated waste ~$1,234.50/month)\n"))
+        out = outputs()
+        self.assertNotIn("#####", out["FULL"])
+        self.assertTrue(out["REGION"].startswith("\n##### eu-west-1  (estimated waste ~$1,234.50/month)\n"))
+
+    def test_gp2_section_has_no_error_key_even_if_findings_has_a_none_error_entry(self):
+        # gp2_volumes has no check of its own (errkey None): a stray "None_error" entry must not be
+        # read as its failure (the section is printed as a plain result, never "check FAILED")
+        m = load_tool()
+        F = {k: [] for k, _, _ in m.CATEGORIES}
+        F["None_error"] = "stray"
+        b = io.StringIO()
+        with contextlib.redirect_stdout(b):
+            m.print_report(F)
+        out = b.getvalue()
+        self.assertNotIn("check FAILED", out)
+        self.assertNotIn("stray", out)
+        self.assertEqual(out.count("  (none found)\n"), len(m.CATEGORIES))
 
 
 if __name__ == "__main__":
